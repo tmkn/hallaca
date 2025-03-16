@@ -1,6 +1,6 @@
 # Hallaca
 
-> A framework to analyze Node.js packages, written in Go
+> A framework to analyze Node.js packages. Written in Go
 
 ## About
 
