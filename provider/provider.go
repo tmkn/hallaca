@@ -10,7 +10,7 @@ import (
 type PackageMetadata = map[string]interface{}
 
 type Provider interface {
-	GetPackageMetadata(name string, version string) (string, error)
+	GetPackageMetadata(name string, version string) (PackageMetadata, error)
 	GetVersions(name string) ([]string, error)
 }
 
@@ -19,23 +19,30 @@ type NPMProvider struct {
 	Versions    map[string][]string
 }
 
-func (p *NPMProvider) GetPackageMetadata(name string, version string) (string, error) {
+func (p *NPMProvider) GetPackageMetadata(name string, version string) (PackageMetadata, error) {
 	var url string = p.RegistryUrl + "/" + name + "/" + version
 
 	resp, err := http.Get(url)
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return string(body), nil
+	var metadata map[string]interface{}
+
+	err = json.Unmarshal(body, &metadata)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't parse json %v", err)
+	}
+
+	return metadata, nil
 }
 
 func (p *NPMProvider) FetchVersions(name string) ([]string, error) {
