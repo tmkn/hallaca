@@ -5,11 +5,12 @@ import (
 	"sort"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/tmkn/hallaca/pkg"
 	"github.com/tmkn/hallaca/provider"
 )
 
 type Resolver interface {
-	Resolve(name string, version string, options Options) any
+	Resolve(name string, version string, options Options) *pkg.Pkg
 }
 
 type Options struct {
@@ -21,6 +22,7 @@ type ResolverQueueItem struct {
 	Name            string
 	Version         string
 	VisitedPackages map[string]interface{}
+	Pkg             *pkg.Pkg
 }
 
 func (item ResolverQueueItem) String() string {
@@ -29,12 +31,13 @@ func (item ResolverQueueItem) String() string {
 
 type StandardResolver struct{}
 
-func (r *StandardResolver) Resolve(name string, version string, options Options) any {
+func (r *StandardResolver) Resolve(name string, version string, options Options) *pkg.Pkg {
 	if version == "" {
 		log.Fatalln("latest version feature is not yet supported")
 	}
 
-	var queue []ResolverQueueItem = []ResolverQueueItem{{Name: name, Version: version, VisitedPackages: make(map[string]interface{})}}
+	var root *pkg.Pkg = &pkg.Pkg{}
+	var queue []ResolverQueueItem = []ResolverQueueItem{{Name: name, Version: version, VisitedPackages: make(map[string]interface{}), Pkg: root}}
 	var dependencyKey = "dependencies"
 	// var visitedPackages map[string]interface{} = make(map[string]interface{})
 	// var currentDepth = 0
@@ -52,6 +55,8 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 		}
 
 		item.Version = ResolveVersion(item.Version, versions)
+		item.Pkg.Version = item.Version
+		item.Pkg.Name = item.Name
 
 		item.VisitedPackages[item.String()] = struct{}{}
 
@@ -75,7 +80,10 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 					log.Fatalf("Value for key %s is not a string\n", key)
 				}
 
-				dependency := ResolverQueueItem{Name: key, Version: strValue, VisitedPackages: make(map[string]interface{})}
+				depPkg := &pkg.Pkg{Parent: item.Pkg}
+				item.Pkg.Dependencies = append(item.Pkg.Dependencies, depPkg)
+
+				dependency := ResolverQueueItem{Name: key, Version: strValue, VisitedPackages: make(map[string]interface{}), Pkg: depPkg}
 				// todo implement loop logic
 				if _, exists := item.VisitedPackages[dependency.String()]; !exists {
 					queue = append(queue, dependency)
@@ -88,7 +96,7 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 
 	}
 
-	return nil
+	return root
 }
 
 func ResolveVersion(toResolve string, versions []string) string {
