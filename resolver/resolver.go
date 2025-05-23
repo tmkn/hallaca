@@ -1,8 +1,9 @@
 package resolver
 
 import (
-	"log"
 	"sort"
+
+	"github.com/charmbracelet/log"
 
 	"github.com/Masterminds/semver/v3"
 	"github.com/tmkn/hallaca/pkg"
@@ -33,7 +34,7 @@ type StandardResolver struct{}
 
 func (r *StandardResolver) Resolve(name string, version string, options Options) *pkg.Pkg {
 	if version == "" {
-		log.Fatalln("latest version feature is not yet supported")
+		log.Fatal("latest version feature is not yet supported")
 	}
 
 	var root *pkg.Pkg = &pkg.Pkg{}
@@ -46,12 +47,12 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 		item := queue[0]
 		queue = queue[1:]
 
-		log.Println("Evaluating", item)
+		log.Infof("Evaluating %s", item)
 
 		versions, err := options.Provider.GetVersions(item.Name)
 
 		if err != nil {
-			log.Fatalln("couldn't get versions for", item)
+			log.Fatal("couldn't get versions for", item)
 		}
 
 		item.Version = ResolveVersion(item.Version, versions)
@@ -63,7 +64,7 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 		metadata, err := options.Provider.GetPackageMetadata(item.Name, item.Version)
 
 		if err != nil {
-			log.Fatalln("couldn't get metadata for", item)
+			log.Fatal("couldn't get metadata for", item)
 		}
 
 		dependencies, ok := metadata[dependencyKey].(map[string]interface{})
@@ -72,7 +73,7 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 			// log.Fatalln("couldn't cast dependencies for", item.Name, item.Version)
 			// log.Println("no dependencies for", item.Name, item.Version)
 		} else {
-			log.Println("found", len(dependencies), "dependencies for", item.Name)
+			log.Infof("found %d dependencies for %s", len(dependencies), item.Name)
 
 			for key, value := range dependencies {
 				strValue, ok := value.(string)
@@ -103,7 +104,7 @@ func ResolveVersion(toResolve string, versions []string) string {
 	constraint, err := semver.NewConstraint(toResolve)
 
 	if err != nil {
-		log.Fatalln("couldn't create version constraint:", toResolve)
+		log.Fatal("couldn't create version constraint:", toResolve)
 	}
 
 	var matchingVersions []*semver.Version
@@ -127,7 +128,7 @@ func ResolveVersion(toResolve string, versions []string) string {
 		return matchingVersions[0].String()
 	}
 
-	log.Fatalln("Couldn't resolve version", toResolve)
+	log.Fatalf("Couldn't resolve version %s", toResolve)
 
 	return ""
 }
