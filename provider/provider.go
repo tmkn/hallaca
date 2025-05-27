@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/charmbracelet/log"
 )
 
 type PackageMetadata = map[string]interface{}
@@ -15,12 +17,18 @@ type Provider interface {
 }
 
 type NPMProvider struct {
-	RegistryUrl string
-	Versions    map[string][]string
+	RegistryUrl   string
+	Versions      map[string][]string
+	MetadataCache map[string]PackageMetadata
 }
 
 func (p *NPMProvider) GetPackageMetadata(name string, version string) (PackageMetadata, error) {
 	var url string = p.RegistryUrl + "/" + name + "/" + version
+
+	if cachedMetadata, exists := p.MetadataCache[url]; exists {
+		log.Warnf("Cache Hit detected loop for %s", url)
+		return cachedMetadata, nil
+	}
 
 	resp, err := http.Get(url)
 
@@ -41,6 +49,8 @@ func (p *NPMProvider) GetPackageMetadata(name string, version string) (PackageMe
 	if err != nil {
 		return nil, fmt.Errorf("couldn't parse json %v", err)
 	}
+
+	p.MetadataCache[url] = metadata
 
 	return metadata, nil
 }
@@ -113,5 +123,8 @@ func (p *NPMProvider) GetVersions(name string) ([]string, error) {
 }
 
 func NewNPMProvider() *NPMProvider {
-	return &NPMProvider{RegistryUrl: "https://registry.npmjs.org", Versions: make(map[string][]string)}
+	return &NPMProvider{
+		RegistryUrl:   "https://registry.npmjs.org",
+		Versions:      make(map[string][]string),
+		MetadataCache: make(map[string]PackageMetadata)}
 }

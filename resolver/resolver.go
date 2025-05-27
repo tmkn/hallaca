@@ -1,10 +1,13 @@
 package resolver
 
 import (
-	"log"
 	"sort"
+	"strings"
+
+	"maps"
 
 	"github.com/Masterminds/semver/v3"
+	"github.com/charmbracelet/log"
 	"github.com/tmkn/hallaca/pkg"
 	"github.com/tmkn/hallaca/provider"
 )
@@ -33,67 +36,112 @@ type StandardResolver struct{}
 
 func (r *StandardResolver) Resolve(name string, version string, options Options) *pkg.Pkg {
 	if version == "" {
-		log.Fatalln("latest version feature is not yet supported")
+		log.Fatalf("latest version feature is not yet supported")
 	}
 
-	var root *pkg.Pkg = &pkg.Pkg{}
-	var queue []ResolverQueueItem = []ResolverQueueItem{{Name: name, Version: version, VisitedPackages: make(map[string]interface{}), Pkg: root}}
-	var dependencyKey = "dependencies"
-	// var visitedPackages map[string]interface{} = make(map[string]interface{})
-	// var currentDepth = 0
+	root := &pkg.Pkg{}
+	queue := []ResolverQueueItem{{
+		Name:            name,
+		Version:         version,
+		VisitedPackages: make(map[string]interface{}),
+		Pkg:             root,
+	}}
+	dependencyKey := "dependencies"
 
 	for len(queue) > 0 {
 		item := queue[0]
 		queue = queue[1:]
 
-		log.Println("Evaluating", item)
+		log.Infof("Evaluating %s", item)
 
 		versions, err := options.Provider.GetVersions(item.Name)
-
 		if err != nil {
-			log.Fatalln("couldn't get versions for", item)
+			log.Fatalf("couldn't get versions for %s", item)
 		}
 
 		item.Version = ResolveVersion(item.Version, versions)
 		item.Pkg.Version = item.Version
 		item.Pkg.Name = item.Name
 
-		item.VisitedPackages[item.String()] = struct{}{}
+		itemID := item.String()
+		item.VisitedPackages[itemID] = struct{}{}
 
 		metadata, err := options.Provider.GetPackageMetadata(item.Name, item.Version)
-
 		if err != nil {
-			log.Fatalln("couldn't get metadata for", item)
+			log.Fatalf("couldn't get metadata for %s", item)
 		}
 
 		dependencies, ok := metadata[dependencyKey].(map[string]interface{})
 
+		log.Infof("Found %d dependencies for %s", len(dependencies), item.Name)
+
 		if !ok {
-			// log.Fatalln("couldn't cast dependencies for", item.Name, item.Version)
-			// log.Println("no dependencies for", item.Name, item.Version)
-		} else {
-			log.Println("found", len(dependencies), "dependencies for", item.Name)
-
-			for key, value := range dependencies {
-				strValue, ok := value.(string)
-				if !ok {
-					log.Fatalf("Value for key %s is not a string\n", key)
-				}
-
-				depPkg := &pkg.Pkg{Parent: item.Pkg}
-				item.Pkg.Dependencies = append(item.Pkg.Dependencies, depPkg)
-
-				dependency := ResolverQueueItem{Name: key, Version: strValue, VisitedPackages: make(map[string]interface{}), Pkg: depPkg}
-				// todo implement loop logic
-				if _, exists := item.VisitedPackages[dependency.String()]; !exists {
-					queue = append(queue, dependency)
-				} else {
-					log.Fatal("Found loop, todo set loop flag")
-				}
-
-			}
+			continue
 		}
 
+		for key, value := range dependencies {
+			var isAliased bool = false
+			var nameToResolve = key
+			versionToResolve, ok := value.(string)
+			if !ok {
+				log.Fatalf("Value for key %s is not a string\n", key)
+			}
+
+			if strings.HasPrefix(versionToResolve, "npm:") {
+				packageSpec := strings.TrimPrefix(versionToResolve, "npm:")
+
+				if _name, _version, error := pkg.ParsePackageSpec(packageSpec); error != nil {
+					log.Fatalf("Couldn't parse package spec %q from %q@%q", packageSpec, key, versionToResolve)
+
+				} else {
+					isAliased = true
+					nameToResolve = _name
+					versionToResolve = _version
+				}
+			}
+
+			depVersions, err := options.Provider.GetVersions(nameToResolve)
+			if err != nil {
+				log.Fatalf("couldn't get versions for dependency %s: %v", nameToResolve, err)
+			}
+
+			resolvedVersion := ResolveVersion(versionToResolve, depVersions)
+			dependencyID := nameToResolve + "@" + resolvedVersion
+
+			depPkg := &pkg.Pkg{
+				Name:    nameToResolve,
+				Version: resolvedVersion,
+				Parent:  item.Pkg,
+			}
+
+			if isAliased {
+				depPkg.Name = key
+				depPkg.AliasedFrom = nameToResolve
+			}
+
+			item.Pkg.Dependencies = append(item.Pkg.Dependencies, depPkg)
+
+			log.Infof("Evaluated %s", depPkg)
+
+			if _, exists := item.VisitedPackages[dependencyID]; exists {
+				log.Warnf("Detected loop for %s", dependencyID)
+				depPkg.IsLoop = true
+
+				continue
+			}
+
+			newVisited := make(map[string]interface{})
+			maps.Copy(newVisited, item.VisitedPackages)
+			newVisited[dependencyID] = struct{}{}
+
+			dependency := ResolverQueueItem{
+				Name:            nameToResolve,
+				Version:         resolvedVersion,
+				VisitedPackages: newVisited,
+				Pkg:             depPkg,
+			}
+			queue = append(queue, dependency)
+		}
 	}
 
 	return root
@@ -101,33 +149,28 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 
 func ResolveVersion(toResolve string, versions []string) string {
 	constraint, err := semver.NewConstraint(toResolve)
-
 	if err != nil {
-		log.Fatalln("couldn't create version constraint:", toResolve)
+		log.Fatalf("couldn't create version constraint: %s", toResolve)
 	}
 
 	var matchingVersions []*semver.Version
-
 	for _, versionString := range versions {
 		version, err := semver.NewVersion(versionString)
 		if err != nil {
-			log.Fatalf("invalid available version: %w", err)
+			log.Fatalf("invalid available version: %v", err)
 		}
 
 		if constraint.Check(version) {
 			matchingVersions = append(matchingVersions, version)
 		}
-
 	}
 
 	sort.Sort(sort.Reverse(semver.Collection(matchingVersions)))
-	// result := make([]string, len(matchingVersions))
 
 	if len(matchingVersions) > 0 {
 		return matchingVersions[0].String()
 	}
 
-	log.Fatalln("Couldn't resolve version", toResolve)
-
+	log.Fatalf("Couldn't resolve version %s", toResolve)
 	return ""
 }
