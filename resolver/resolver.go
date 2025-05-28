@@ -52,6 +52,10 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 		item := queue[0]
 		queue = queue[1:]
 
+		if pkg.GetDepth(item.Pkg) > uint(options.Depth) {
+			continue
+		}
+
 		log.Infof("Evaluating %s", item)
 
 		versions, err := options.Provider.GetVersions(item.Name)

@@ -34,6 +34,18 @@ func DependencyCount(root *Pkg, includeRoot bool) (count int) {
 	return
 }
 
+func GetDepth(start *Pkg) (depth uint) {
+	item := start
+
+	for item != nil {
+		depth++
+
+		item = item.Parent
+	}
+
+	return
+}
+
 func ParsePackageSpec(spec string) (string, string, error) {
 	if spec == "" {
 		return "", "", fmt.Errorf("empty package spec")
