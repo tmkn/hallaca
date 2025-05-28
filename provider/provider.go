@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
-
-	"github.com/charmbracelet/log"
 )
 
 type PackageMetadata = map[string]interface{}
@@ -17,114 +16,94 @@ type Provider interface {
 }
 
 type NPMProvider struct {
-	RegistryUrl   string
-	Versions      map[string][]string
-	MetadataCache map[string]PackageMetadata
-}
-
-func (p *NPMProvider) GetPackageMetadata(name string, version string) (PackageMetadata, error) {
-	var url string = p.RegistryUrl + "/" + name + "/" + version
-
-	if cachedMetadata, exists := p.MetadataCache[url]; exists {
-		log.Warnf("Cache Hit detected loop for %s", url)
-		return cachedMetadata, nil
-	}
-
-	resp, err := http.Get(url)
-
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-
-	if err != nil {
-		return nil, err
-	}
-
-	var metadata map[string]interface{}
-
-	err = json.Unmarshal(body, &metadata)
-	if err != nil {
-		return nil, fmt.Errorf("couldn't parse json %v", err)
-	}
-
-	p.MetadataCache[url] = metadata
-
-	return metadata, nil
-}
-
-func (p *NPMProvider) FetchVersions(name string) ([]string, error) {
-	var emptyList []string
-	var metadata map[string]interface{}
-	var url = p.RegistryUrl + "/" + name
-
-	req, err := http.NewRequest("GET", url, nil)
-
-	if err != nil {
-		return emptyList, err
-	}
-
-	req.Header.Set("Accept", "application/vnd.npm.install-v1+json")
-
-	client := &http.Client{}
-	resp, err := client.Do(req)
-
-	if err != nil {
-		return emptyList, err
-	}
-
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return emptyList, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-
-	if err != nil {
-		return emptyList, err
-	}
-
-	err = json.Unmarshal(body, &metadata)
-	if err != nil {
-		return emptyList, fmt.Errorf("couldn't parse json %v", err)
-	}
-
-	// collect versions and put them into the string slice
-	all_versions, ok := metadata["versions"].(map[string]interface{})
-	var versions []string
-
-	if !ok {
-		return emptyList, fmt.Errorf("couldn't parse versions")
-	}
-
-	for key := range all_versions {
-		versions = append(versions, key)
-	}
-
-	p.Versions[name] = versions
-
-	return versions, nil
-}
-
-func (p *NPMProvider) GetVersions(name string) ([]string, error) {
-	if availableVersion, ok := p.Versions[name]; ok {
-		return availableVersion, nil
-	}
-
-	fetchedVersions, err := p.FetchVersions(name)
-	if err != nil {
-		return nil, err
-	}
-
-	return fetchedVersions, nil
+	registryUrl string
+	cache       map[string]map[string]PackageMetadata
 }
 
 func NewNPMProvider() *NPMProvider {
 	return &NPMProvider{
-		RegistryUrl:   "https://registry.npmjs.org",
-		Versions:      make(map[string][]string),
-		MetadataCache: make(map[string]PackageMetadata)}
+		registryUrl: "https://registry.npmjs.org",
+		cache:       make(map[string]map[string]PackageMetadata),
+	}
+}
+
+func (p *NPMProvider) GetPackageMetadata(name string, version string) (PackageMetadata, error) {
+	_, exists := p.cache[name]
+
+	if !exists {
+		p.populateCache(name)
+	}
+
+	cacheMetadata, exists := p.cache[name][version]
+
+	if exists {
+		return cacheMetadata, nil
+	}
+
+	return nil, fmt.Errorf("couldn't get metadata for %s %s", name, version)
+}
+
+func (p *NPMProvider) GetVersions(name string) ([]string, error) {
+	cache, exists := p.cache[name]
+
+	if !exists {
+		p.populateCache(name)
+
+		cache = p.cache[name]
+	}
+
+	var versions []string
+	for version := range maps.Keys(cache) {
+		versions = append(versions, version)
+	}
+
+	return versions, nil
+}
+
+func (p *NPMProvider) populateCache(name string) error {
+	_, exists := p.cache[name]
+
+	if exists {
+		return nil
+	}
+
+	var url = p.registryUrl + "/" + name
+
+	resp, err := http.Get(url)
+
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+
+	if err != nil {
+		return err
+	}
+
+	var metadata map[string]interface{}
+
+	err = json.Unmarshal(body, &metadata)
+	if err != nil {
+		return fmt.Errorf("couldn't parse json %v", err)
+	}
+
+	allVersions, ok := metadata["versions"].(map[string]interface{})
+
+	if !ok {
+		return fmt.Errorf("couldn't parse versions json %v", err)
+	}
+
+	p.cache[name] = make(map[string]PackageMetadata)
+
+	for version, _metadata := range allVersions {
+		metadata, ok := _metadata.(PackageMetadata)
+
+		if ok {
+			p.cache[name][version] = metadata
+		}
+	}
+
+	return nil
 }
