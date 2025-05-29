@@ -28,7 +28,7 @@ type ResolverQueueItem struct {
 	Pkg             *pkg.Pkg
 }
 
-func (item ResolverQueueItem) String() string {
+func (item *ResolverQueueItem) String() string {
 	return item.Name + "@" + item.Version
 }
 
@@ -56,7 +56,7 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 			continue
 		}
 
-		log.Infof("Evaluating %s", item)
+		log.Infof("Evaluating %s", &item)
 
 		versions, err := options.Provider.GetVersions(item.Name)
 		if err != nil {
