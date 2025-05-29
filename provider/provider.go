@@ -28,15 +28,13 @@ func NewNPMProvider() *NPMProvider {
 }
 
 func (p *NPMProvider) GetPackageMetadata(name string, version string) (PackageMetadata, error) {
-	_, exists := p.cache[name]
-
-	if !exists {
-		p.populateCache(name)
+	if _, exists := p.cache[name]; !exists {
+		if err := p.populateCache(name); err != nil {
+			return nil, err
+		}
 	}
 
-	cacheMetadata, exists := p.cache[name][version]
-
-	if exists {
+	if cacheMetadata, exists := p.cache[name][version]; exists {
 		return cacheMetadata, nil
 	}
 
@@ -47,7 +45,9 @@ func (p *NPMProvider) GetVersions(name string) ([]string, error) {
 	cache, exists := p.cache[name]
 
 	if !exists {
-		p.populateCache(name)
+		if err := p.populateCache(name); err != nil {
+			return nil, err
+		}
 
 		cache = p.cache[name]
 	}
@@ -61,9 +61,7 @@ func (p *NPMProvider) GetVersions(name string) ([]string, error) {
 }
 
 func (p *NPMProvider) populateCache(name string) error {
-	_, exists := p.cache[name]
-
-	if exists {
+	if _, exists := p.cache[name]; exists {
 		return nil
 	}
 
