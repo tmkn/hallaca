@@ -6,35 +6,53 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"sync"
+	"time"
 )
 
-type PackageMetadata = map[string]interface{}
+type Package struct {
+	Name         string
+	Version      string
+	Dependencies map[string]string
+}
 
 type Provider interface {
-	GetPackageMetadata(name string, version string) (PackageMetadata, error)
+	GetPackageMetadata(name string, version string) (*Package, error)
 	GetVersions(name string) ([]string, error)
 }
 
 type NPMProvider struct {
 	registryUrl string
-	cache       map[string]map[string]PackageMetadata
+	cache       map[string]map[string]*Package
+	mutex       sync.RWMutex
+	client      *http.Client
 }
 
 func NewNPMProvider() *NPMProvider {
 	return &NPMProvider{
 		registryUrl: "https://registry.npmjs.org",
-		cache:       make(map[string]map[string]PackageMetadata),
+		cache:       make(map[string]map[string]*Package),
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
 	}
 }
 
-func (p *NPMProvider) GetPackageMetadata(name string, version string) (PackageMetadata, error) {
-	if _, exists := p.cache[name]; !exists {
+func (p *NPMProvider) GetPackageMetadata(name string, version string) (*Package, error) {
+	p.mutex.RLock()
+	cachedVersions, exists := p.cache[name]
+	p.mutex.RUnlock()
+
+	if !exists {
 		if err := p.populateCache(name); err != nil {
 			return nil, err
 		}
+		p.mutex.RLock()
+		cachedVersions = p.cache[name]
+		p.mutex.RUnlock()
 	}
 
-	if cacheMetadata, exists := p.cache[name][version]; exists {
+	if cacheMetadata, exists := cachedVersions[version]; exists {
 		return cacheMetadata, nil
 	}
 
@@ -42,14 +60,17 @@ func (p *NPMProvider) GetPackageMetadata(name string, version string) (PackageMe
 }
 
 func (p *NPMProvider) GetVersions(name string) ([]string, error) {
+	p.mutex.RLock()
 	cache, exists := p.cache[name]
+	p.mutex.RUnlock()
 
 	if !exists {
 		if err := p.populateCache(name); err != nil {
 			return nil, err
 		}
-
+		p.mutex.RLock()
 		cache = p.cache[name]
+		p.mutex.RUnlock()
 	}
 
 	var versions []string
@@ -61,46 +82,42 @@ func (p *NPMProvider) GetVersions(name string) ([]string, error) {
 }
 
 func (p *NPMProvider) populateCache(name string) error {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+
 	if _, exists := p.cache[name]; exists {
 		return nil
 	}
 
 	var url = p.registryUrl + "/" + name
 
-	resp, err := http.Get(url)
-
+	resp, err := p.client.Get(url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to fetch package metadata: %s", resp.Status)
+	}
 
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
 	}
 
-	var metadata map[string]interface{}
+	var registryResponse struct {
+		Versions map[string]Package `json:"versions"`
+	}
 
-	err = json.Unmarshal(body, &metadata)
+	err = json.Unmarshal(body, &registryResponse)
 	if err != nil {
 		return fmt.Errorf("couldn't parse json %v", err)
 	}
 
-	allVersions, ok := metadata["versions"].(map[string]interface{})
-
-	if !ok {
-		return fmt.Errorf("couldn't parse versions json %v", err)
-	}
-
-	p.cache[name] = make(map[string]PackageMetadata)
-
-	for version, _metadata := range allVersions {
-		metadata, ok := _metadata.(PackageMetadata)
-
-		if ok {
-			p.cache[name][version] = metadata
-		}
+	p.cache[name] = make(map[string]*Package)
+	for version, pkg := range registryResponse.Versions {
+		p.cache[name][version] = &pkg
 	}
 
 	return nil
