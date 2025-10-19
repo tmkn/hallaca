@@ -3,6 +3,8 @@ package pkg
 import (
 	"fmt"
 	"strings"
+
+	"github.com/tmkn/hallaca/provider"
 )
 
 type Pkg struct {
@@ -12,6 +14,7 @@ type Pkg struct {
 	Version      string
 	Dependencies []*Pkg
 	IsLoop       bool
+	Metadata     *provider.Package
 }
 
 func (pkg *Pkg) String() string {

@@ -9,6 +9,7 @@ import (
 	"github.com/tmkn/hallaca/pkg"
 	"github.com/tmkn/hallaca/provider"
 	"github.com/tmkn/hallaca/resolver"
+	"github.com/tmkn/hallaca/tar"
 )
 
 func main() {
@@ -48,5 +49,7 @@ func main() {
 	}
 
 	log.Infof("Dependency count: %d\n", pkg.DependencyCount(root, false))
+
+	tar.DownloadTar(root)
 
 }

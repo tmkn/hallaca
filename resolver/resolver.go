@@ -78,6 +78,8 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 			return nil, &ResolverError{Msg: "couldn't get metadata for %s", Pkg: &item}
 		}
 
+		item.Pkg.Metadata = metadata
+
 		log.Infof("Found %d dependencies for %s", len(metadata.Dependencies), item.Name)
 
 		for key, value := range metadata.Dependencies {

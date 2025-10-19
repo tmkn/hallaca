@@ -14,6 +14,9 @@ type Package struct {
 	Name         string
 	Version      string
 	Dependencies map[string]string
+	Dist         struct {
+		Tarball string
+	}
 }
 
 type Provider interface {
