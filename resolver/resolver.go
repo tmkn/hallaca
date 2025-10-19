@@ -13,7 +13,7 @@ import (
 )
 
 type Resolver interface {
-	Resolve(name string, version string, options Options) *pkg.Pkg
+	Resolve(name string, version string, options Options) (*pkg.Pkg, error)
 }
 
 type Options struct {
@@ -34,9 +34,9 @@ func (item *ResolverQueueItem) String() string {
 
 type StandardResolver struct{}
 
-func (r *StandardResolver) Resolve(name string, version string, options Options) *pkg.Pkg {
+func (r *StandardResolver) Resolve(name string, version string, options Options) (*pkg.Pkg, error) {
 	if version == "" {
-		log.Fatalf("latest version feature is not yet supported")
+		return nil, &ResolverError{Msg: "latest version feature is not yet supported"}
 	}
 
 	root := &pkg.Pkg{}
@@ -46,7 +46,6 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 		VisitedPackages: make(map[string]interface{}),
 		Pkg:             root,
 	}}
-	dependencyKey := "dependencies"
 
 	for len(queue) > 0 {
 		item := queue[0]
@@ -60,10 +59,14 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 
 		versions, err := options.Provider.GetVersions(item.Name)
 		if err != nil {
-			log.Fatalf("couldn't get versions for %s", item)
+			return nil, &ResolverError{Msg: "couldn't get versions for %s", Pkg: &item}
 		}
 
-		item.Version = ResolveVersion(item.Version, versions)
+		resolvedVersion, err := ResolveVersion(item.Version, versions)
+		if err != nil {
+			return nil, err
+		}
+		item.Version = resolvedVersion
 		item.Pkg.Version = item.Version
 		item.Pkg.Name = item.Name
 
@@ -72,31 +75,21 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 
 		metadata, err := options.Provider.GetPackageMetadata(item.Name, item.Version)
 		if err != nil {
-			log.Fatalf("couldn't get metadata for %s", item)
+			return nil, &ResolverError{Msg: "couldn't get metadata for %s", Pkg: &item}
 		}
 
-		dependencies, ok := metadata[dependencyKey].(map[string]interface{})
+		log.Infof("Found %d dependencies for %s", len(metadata.Dependencies), item.Name)
 
-		log.Infof("Found %d dependencies for %s", len(dependencies), item.Name)
-
-		if !ok {
-			continue
-		}
-
-		for key, value := range dependencies {
+		for key, value := range metadata.Dependencies {
 			var isAliased bool = false
 			var nameToResolve = key
-			versionToResolve, ok := value.(string)
-			if !ok {
-				log.Fatalf("Value for key %s is not a string\n", key)
-			}
+			versionToResolve := value
 
 			if strings.HasPrefix(versionToResolve, "npm:") {
 				packageSpec := strings.TrimPrefix(versionToResolve, "npm:")
 
-				if _name, _version, error := pkg.ParsePackageSpec(packageSpec); error != nil {
-					log.Fatalf("Couldn't parse package spec %q from %q@%q", packageSpec, key, versionToResolve)
-
+				if _name, _version, err := pkg.ParsePackageSpec(packageSpec); err != nil {
+					return nil, &ResolverError{Msg: "Couldn't parse package spec %q from %q@%q", Pkg: &item}
 				} else {
 					isAliased = true
 					nameToResolve = _name
@@ -106,10 +99,13 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 
 			depVersions, err := options.Provider.GetVersions(nameToResolve)
 			if err != nil {
-				log.Fatalf("couldn't get versions for dependency %s: %v", nameToResolve, err)
+				return nil, &ResolverError{Msg: "couldn't get versions for dependency %s: %v", Pkg: &item}
 			}
 
-			resolvedVersion := ResolveVersion(versionToResolve, depVersions)
+			resolvedVersion, err := ResolveVersion(versionToResolve, depVersions)
+			if err != nil {
+				return nil, err
+			}
 			dependencyID := nameToResolve + "@" + resolvedVersion
 
 			depPkg := &pkg.Pkg{
@@ -148,20 +144,20 @@ func (r *StandardResolver) Resolve(name string, version string, options Options)
 		}
 	}
 
-	return root
+	return root, nil
 }
 
-func ResolveVersion(toResolve string, versions []string) string {
+func ResolveVersion(toResolve string, versions []string) (string, error) {
 	constraint, err := semver.NewConstraint(toResolve)
 	if err != nil {
-		log.Fatalf("couldn't create version constraint: %s", toResolve)
+		return "", &ResolverError{Msg: "couldn't create version constraint: %s", Pkg: nil}
 	}
 
 	var matchingVersions []*semver.Version
 	for _, versionString := range versions {
 		version, err := semver.NewVersion(versionString)
 		if err != nil {
-			log.Fatalf("invalid available version: %v", err)
+			return "", &ResolverError{Msg: "invalid available version: %v", Pkg: nil}
 		}
 
 		if constraint.Check(version) {
@@ -172,9 +168,8 @@ func ResolveVersion(toResolve string, versions []string) string {
 	sort.Sort(sort.Reverse(semver.Collection(matchingVersions)))
 
 	if len(matchingVersions) > 0 {
-		return matchingVersions[0].String()
+		return matchingVersions[0].String(), nil
 	}
 
-	log.Fatalf("Couldn't resolve version %s", toResolve)
-	return ""
+	return "", &ResolverError{Msg: "Couldn't resolve version %s", Pkg: nil}
 }

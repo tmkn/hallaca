@@ -21,28 +21,31 @@ func main() {
 	if len(args) == 2 {
 		name = args[0]
 		version = args[1]
-	}
+	} else {
+		form := huh.NewForm(huh.NewGroup(huh.NewInput().
+			Title("Package?").
+			Value(&name), huh.NewInput().
+			Title("Version?").
+			Value(&version)),
+		).WithTheme(huh.ThemeCatppuccin())
 
-	form := huh.NewForm(huh.NewGroup(huh.NewInput().
-		Title("Package?").
-		Value(&name), huh.NewInput().
-		Title("Version?").
-		Value(&version)),
-	).WithTheme(huh.ThemeCatppuccin())
-
-	err := form.Run()
-	if err != nil {
-		log.Fatal(err)
+		err := form.Run()
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 
 	npmProvider := provider.NewNPMProvider()
 
 	standardResolver := resolver.StandardResolver{}
 
-	root := standardResolver.Resolve(name, version, resolver.Options{
+	root, err := standardResolver.Resolve(name, version, resolver.Options{
 		Provider: npmProvider,
 		Depth:    math.MaxUint32,
 	})
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	log.Infof("Dependency count: %d\n", pkg.DependencyCount(root, false))
 
